@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NFC — Dernier scan</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; }
+    .card { max-width: 560px; padding: 16px 20px; border: 1px solid #ddd; border-radius: 12px; }
+    .title { font-size: 1.25rem; font-weight: 700; margin-bottom: 8px; }
+    .last { font-size: 1.1rem; margin: 4px 0 12px; }
+    .muted { color: #555; font-size: 0.95rem; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; margin-top: 12px; }
+    a.button, button { text-decoration:none; border:1px solid #333; padding:10px 14px; border-radius:10px; cursor:pointer; background:#fff; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="title">Dernier scan</div>
+    <div id="status" class="muted">Chargement…</div>
+    <div id="last" class="last" hidden></div>
+    <div id="when" class="muted" hidden></div>
+    <div class="row">
+      <a id="formLink" class="button" href="#" rel="noopener" target="_blank">Remplir le formulaire</a>
+      <button id="refreshBtn" type="button">Rafraîchir</button>
+    </div>
+  </div>
+
+  <script>
+  // 👉 REMPLACE ICI :
+  const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxVPvYiecC55amcyKuySt5rNPpAx7-_dZLY1KEOSCLvfc-hFcBtJFbi-Ds6zxuzWALV/exec';
+  const GOOGLE_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSeYjFDKHRhFwvze41lS2bojxuMd0kSOl-MLBDtn4EFPw53IGA/viewform?usp=header';
+
+  // Utilitaires
+  const fmtDate = (ms) => {
+    if (!ms) return '—';
+    const dt = new Date(ms);
+    return new Intl.DateTimeFormat('fr-BE', { dateStyle: 'short', timeStyle: 'medium' }).format(dt);
+  };
+
+  const $ = (sel) => document.querySelector(sel);
+  const render = (data) => {
+    const status = $('#status');
+    const last = $('#last');
+    const when = $('#when');
+  
+    if (data.empty) {
+      status.textContent = "Aucune entrée pour l’instant.";
+      last.hidden = true; when.hidden = true;
+      return;
+    }
+  
+    status.textContent = "";
+    last.hidden = false; when.hidden = false;
+    last.textContent = `👤 ${data.detenteur}`;
+    when.textContent = `🕒 ${data.iso} — Motif : ${data.motif || '—'}`;
+  };
+
+  const fetchJSON = async () => {
+    // Cache-buster pour éviter un proxy un peu trop zélé
+    const url = `${WEB_APP_URL}?action=last&_t=${Date.now()}`;
+    const res = await fetch(url, { credentials: 'omit' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return await res.json();
+  };
+
+  const fetchJSONP = () => new Promise((resolve, reject) => {
+    const cbName = '__onLast_' + Math.random().toString(36).slice(2);
+    window[cbName] = (payload) => { resolve(payload); cleanup(); };
+    const s = document.createElement('script');
+    s.src = `${WEB_APP_URL}?action=last&callback=${cbName}&_t=${Date.now()}`;
+    s.onerror = () => { reject(new Error('JSONP error')); cleanup(); };
+    document.body.appendChild(s);
+    function cleanup() { delete window[cbName]; s.remove(); }
+  });
+
+  async function load() {
+    $('#formLink').href = GOOGLE_FORM_URL;
+    $('#status').textContent = 'Chargement…';
+    try {
+      const data = await fetchJSON();      // tentative JSON “classique”
+      render(data);
+    } catch (e) {
+      try {
+        const data = await fetchJSONP();   // repli JSONP (bypass CORS)
+        render(data);
+      } catch (err) {
+        $('#status').textContent = "Impossible de charger les infos.";
+      }
+    }
+  }
+
+  $('#refreshBtn').addEventListener('click', load);
+  document.addEventListener('DOMContentLoaded', load);
+  </script>
+</body>
+</html>
