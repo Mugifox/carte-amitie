@@ -3,23 +3,27 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NFC — Dernier scan</title>
+  <title>Dernier détenteur de la carte</title>
   <style>
     body { font-family: system-ui, sans-serif; margin: 24px; }
-    .card { max-width: 560px; padding: 16px 20px; border: 1px solid #ddd; border-radius: 12px; }
-    .title { font-size: 1.25rem; font-weight: 700; margin-bottom: 8px; }
-    .last { font-size: 1.1rem; margin: 4px 0 12px; }
-    .muted { color: #555; font-size: 0.95rem; }
-    .row { display:flex; gap:12px; flex-wrap:wrap; margin-top: 12px; }
+    .card { max-width: 640px; padding: 16px 20px; border: 1px solid #ddd; border-radius: 12px; }
+    .title { font-size: 1.4rem; font-weight: 800; margin-bottom: 10px; }
+    .line  { font-size: 1.05rem; margin: 6px 0; }
+    .muted { color: #555; font-size: 0.96rem; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; margin-top: 14px; }
     a.button, button { text-decoration:none; border:1px solid #333; padding:10px 14px; border-radius:10px; cursor:pointer; background:#fff; }
   </style>
 </head>
 <body>
   <div class="card">
-    <div class="title">Dernier scan</div>
+    <div class="title">Dernier détenteur de la carte</div>
     <div id="status" class="muted">Chargement…</div>
-    <div id="last" class="last" hidden></div>
-    <div id="when" class="muted" hidden></div>
+
+    <div id="last" class="line" hidden></div>
+    <div id="when" class="muted" hidden></div>      <!-- Date (français) -->
+    <div id="delta" class="muted" hidden></div>     <!-- Écart jours/heures -->
+    <div id="motif" class="line" hidden></div>      <!-- Motif séparé -->
+
     <div class="row">
       <a id="formLink" class="button" href="#" rel="noopener" target="_blank">Remplir le formulaire</a>
       <button id="refreshBtn" type="button">Rafraîchir</button>
@@ -31,33 +35,53 @@
   const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxVPvYiecC55amcyKuySt5rNPpAx7-_dZLY1KEOSCLvfc-hFcBtJFbi-Ds6zxuzWALV/exec';
   const GOOGLE_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSeYjFDKHRhFwvze41lS2bojxuMd0kSOl-MLBDtn4EFPw53IGA/viewform?usp=header';
 
-  // Utilitaires
-  const fmtDate = (ms) => {
+  // ------------------ helpers ------------------
+  const $ = (sel) => document.querySelector(sel);
+
+  // Date FR lisible (locale du navigateur, FR demandé)
+  const fmtDateFR = (ms) => {
     if (!ms) return '—';
-    const dt = new Date(ms);
-    return new Intl.DateTimeFormat('fr-BE', { dateStyle: 'short', timeStyle: 'medium' }).format(dt);
+    return new Intl.DateTimeFormat('fr-FR', { dateStyle: 'full', timeStyle: 'medium' }).format(new Date(ms));
   };
 
-  const $ = (sel) => document.querySelector(sel);
+  // Écart en jours/heures (arrondi à l’inférieur)
+  function diffJoursHeures(fromMs, toMs = Date.now()) {
+    if (!fromMs) return '';
+    let diff = Math.max(0, toMs - fromMs);
+    const J = 24*60*60*1000, H = 60*60*1000;
+    const jours = Math.floor(diff / J);
+    diff %= J;
+    const heures = Math.floor(diff / H);
+    const parts = [];
+    if (jours) parts.push(`${jours} ${jours>1?'jours':'jour'}`);
+    parts.push(`${heures} ${heures>1?'heures':'heure'}`);
+    return parts.join(' ');
+  }
+
   const render = (data) => {
     const status = $('#status');
-    const last = $('#last');
-    const when = $('#when');
-  
+    const last   = $('#last');
+    const when   = $('#when');
+    const delta  = $('#delta');
+    const motif  = $('#motif');
+
     if (data.empty) {
       status.textContent = "Aucune entrée pour l’instant.";
-      last.hidden = true; when.hidden = true;
+      last.hidden = when.hidden = delta.hidden = motif.hidden = true;
       return;
     }
-  
+
     status.textContent = "";
-    last.hidden = false; when.hidden = false;
-    last.textContent = `👤 ${data.detenteur}`;
-    when.textContent = `🕒 ${data.iso} — Motif : ${data.motif || '—'}`;
+    last.hidden = when.hidden = delta.hidden = motif.hidden = false;
+
+    last.textContent  = `👤 ${data.detenteur || data.name || 'Inconnu'}`;
+    when.textContent  = `🕒 ${fmtDateFR(data.timestampMs)}`;
+    delta.textContent = `Δ depuis le dernier scan : ${diffJoursHeures(data.timestampMs)}`;
+    motif.textContent = `📝 Motif : ${data.motif || '—'}`;
   };
 
+  // -------- fetch JSON normal puis repli JSONP --------
   const fetchJSON = async () => {
-    // Cache-buster pour éviter un proxy un peu trop zélé
     const url = `${WEB_APP_URL}?action=last&_t=${Date.now()}`;
     const res = await fetch(url, { credentials: 'omit' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -71,22 +95,17 @@
     s.src = `${WEB_APP_URL}?action=last&callback=${cbName}&_t=${Date.now()}`;
     s.onerror = () => { reject(new Error('JSONP error')); cleanup(); };
     document.body.appendChild(s);
-    function cleanup() { delete window[cbName]; s.remove(); }
+    function cleanup(){ delete window[cbName]; s.remove(); }
   });
 
   async function load() {
     $('#formLink').href = GOOGLE_FORM_URL;
     $('#status').textContent = 'Chargement…';
     try {
-      const data = await fetchJSON();      // tentative JSON “classique”
-      render(data);
-    } catch (e) {
-      try {
-        const data = await fetchJSONP();   // repli JSONP (bypass CORS)
-        render(data);
-      } catch (err) {
-        $('#status').textContent = "Impossible de charger les infos.";
-      }
+      render(await fetchJSON());
+    } catch {
+      try { render(await fetchJSONP()); }
+      catch { $('#status').textContent = "Impossible de charger les infos."; }
     }
   }
 
