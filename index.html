@@ -21,7 +21,7 @@
 
     <div id="last" class="line" hidden></div>
     <div id="when" class="muted" hidden></div>      <!-- Date (français) -->
-    <div id="delta" class="muted" hidden></div>     <!-- Écart jours/heures -->
+    <div id="delta" class="muted" hidden></div>     <!-- Écart relatif -->
     <div id="motif" class="line" hidden></div>      <!-- Motif séparé -->
 
     <div class="row">
@@ -35,60 +35,69 @@
   const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxVPvYiecC55amcyKuySt5rNPpAx7-_dZLY1KEOSCLvfc-hFcBtJFbi-Ds6zxuzWALV/exec';
   const GOOGLE_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSeYjFDKHRhFwvze41lS2bojxuMd0kSOl-MLBDtn4EFPw53IGA/viewform?usp=header';
 
-// Helpers
-const $ = (sel) => document.querySelector(sel);
-const fmtDateFR = (ms) => {
-  if (!ms) return '—';
-  return new Intl.DateTimeFormat('fr-FR', { dateStyle: 'full', timeStyle: 'medium' })
-           .format(new Date(ms));
-};
-// Écart en jours/heures (+ minutes si < 1 h)
-function diffJoursHeures(fromMs, toMs = Date.now()) {
-  if (!fromMs) return '';
-  let diff = Math.max(0, toMs - fromMs);
-  const J = 24*60*60*1000, H = 60*60*1000, M = 60*1000;
-  const jours = Math.floor(diff / J); diff %= J;
-  const heures = Math.floor(diff / H); diff %= H;
-  const minutes = Math.floor(diff / M);
-  const parts = [];
-  if (jours) parts.push(`${jours} ${jours>1?'jours':'jour'}`);
-  if (heures || jours) parts.push(`${heures} ${heures>1?'heures':'heure'}`);
-  else parts.push(`${minutes} ${minutes>1?'minutes':'minute'}`);
-  return parts.join(' ');
-}
+  // ------------------ helpers ------------------
+  const $ = (sel) => document.querySelector(sel);
 
-// 🔧 nouvelle fonction pour obtenir le timestamp en ms à partir du payload
-function getMsFromPayload(data) {
-  if (typeof data?.timestampMs === 'number') return data.timestampMs;
-  if (typeof data?.horodateur === 'number')  return data.horodateur;
-  if (typeof data?.horodateur === 'string')  return Date.parse(data.horodateur) || null;
-  if (typeof data?.iso === 'string')         return Date.parse(data.iso) || null;
-  return null;
-}
+  // Date FR lisible
+  const fmtDateFR = (ms) => {
+    if (!ms) return '—';
+    return new Intl.DateTimeFormat('fr-FR', { dateStyle: 'full', timeStyle: 'medium' })
+             .format(new Date(ms));
+  };
 
-const render = (data) => {
-  const status = $('#status');
-  const last   = $('#last');
-  const when   = $('#when');
-  const delta  = $('#delta');
-  const motif  = $('#motif');
+  // Écart relatif (jours/heures/minutes)
+  function relativeFR(fromMs, toMs = Date.now()) {
+    if (!fromMs) return '';
+    const diff = Math.max(0, toMs - fromMs);
+    if (diff < 60 * 1000) return "à l’instant";
 
-  if (data.empty) {
-    status.textContent = "Aucune entrée pour l’instant.";
-    last.hidden = when.hidden = delta.hidden = motif.hidden = true;
-    return;
+    let r = diff;
+    const J = 24*60*60*1000, H = 60*60*1000, M = 60*1000;
+    const jours   = Math.floor(r / J); r %= J;
+    const heures  = Math.floor(r / H); r %= H;
+    const minutes = Math.floor(r / M);
+
+    const s = (n, sing, plur) => n + ' ' + (n > 1 ? plur : sing);
+    const parts = [];
+    if (jours) parts.push(s(jours, 'jour', 'jours'));
+    if (jours || heures) parts.push(s(heures, 'heure', 'heures'));
+    parts.push(s(minutes, 'minute', 'minutes'));
+
+    return 'il y a ' + parts.join(', ');
   }
 
-  status.textContent = "";
-  last.hidden = when.hidden = delta.hidden = motif.hidden = false;
+  // Récupère un timestamp ms à partir du payload
+  function getMsFromPayload(data) {
+    if (typeof data?.timestampMs === 'number') return data.timestampMs;
+    if (typeof data?.horodateur === 'number')  return data.horodateur;
+    if (typeof data?.horodateur === 'string')  return Date.parse(data.horodateur) || null;
+    if (typeof data?.iso === 'string')         return Date.parse(data.iso) || null;
+    return null;
+  }
 
-  const ms = getMsFromPayload(data);
+  const render = (data) => {
+    const status = $('#status');
+    const last   = $('#last');
+    const when   = $('#when');
+    const delta  = $('#delta');
+    const motif  = $('#motif');
 
-  last.textContent  = `👤 ${data.detenteur || data.name || 'Inconnu'}`;
-  when.textContent  = `🕒 ${fmtDateFR(ms)}`;
-  delta.textContent = `Δ depuis le dernier scan : ${diffJoursHeures(ms)}`;
-  motif.textContent = `📝 Motif : ${data.motif || '—'}`;
-};
+    if (data.empty) {
+      status.textContent = "Aucune entrée pour l’instant.";
+      last.hidden = when.hidden = delta.hidden = motif.hidden = true;
+      return;
+    }
+
+    status.textContent = "";
+    last.hidden = when.hidden = delta.hidden = motif.hidden = false;
+
+    const ms = getMsFromPayload(data);
+
+    last.textContent  = `👤 ${data.detenteur || data.name || 'Inconnu'}`;
+    when.textContent  = `🕒 ${fmtDateFR(ms)}`;
+    delta.textContent = relativeFR(ms);
+    motif.textContent = `📝 Motif : ${data.motif || '—'}`;
+  };
 
   // -------- fetch JSON normal puis repli JSONP --------
   const fetchJSON = async () => {
